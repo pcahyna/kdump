@@ -13,14 +13,16 @@
       delegate_to: "{{ ssh_dump_server_outside }}"
       delegate_facts: True
 
-    - include_role:
-        name: kdump
-      vars:
+    - name: set variables
+      set_fact:
         ssh_dump_user: "{{ hostvars[ssh_dump_server_outside]['ansible_user_id'] }}"
         # This is the outside address. Ansible will connect to it to
         # copy the ssh key.
         ssh_dump_server: "{{ ssh_dump_server_outside }}"
         path: /tmp/test
+
+    - name: set dump target
+      set_fact:
         dump_target:
           kind: ssh
           # This is the ssh dump server address visible from inside
@@ -30,3 +32,41 @@
           # (i.e. for ansible this is localhost). From the VM its
           # address is then identical to the default route.
           location: "{{ ssh_dump_user }}@{{ ansible_default_ipv4.gateway }}"
+      
+    - include_role:
+        name: kdump
+
+    - name: create temporary target directory
+      tempfile:
+        state: directory
+        suffix: target
+      delegate_to: "{{ ssh_dump_server_outside }}"
+      register: targetdir
+
+    - name: create temporary file
+      tempfile:
+        state: file
+        suffix: temp
+      register: srcfile
+
+    - name: show the temporary file name
+      debug:
+        var: srcfile
+
+    - name: fill temp file with something unique
+      copy:
+        content: "{{ ansible_env.SSH_CONNECTION }}"
+        dest: "{{ srcfile.path }}"
+      
+    - name: copy a trivial file to the dump server to ensure ssh works
+      command:  "scp {{ srcfile.path }} {{ dump_target.location }}:{{targetdir.path}}"
+
+    - name: show the local temporary dir name name
+      debug:
+        var: targetdir
+
+    - name: assert identity
+      assert:
+        that:
+          - "{{ lookup('file', targetdir.path ) == ansible_env.SSH_CONNECTION }}"
+      delegate_to: "{{ ssh_dump_server_outside }}"
